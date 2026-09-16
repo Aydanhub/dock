@@ -86,6 +86,20 @@ In normal operation a load balancer never sends you this: readiness fails
 first, which takes the instance out of rotation. Seeing it means traffic
 reached an instance before `/readyz` was consulted.
 
+### `request-timeout` — 504
+
+Handling took longer than `REQUEST_TIMEOUT_SECONDS`, so the server gave up
+waiting and freed your connection.
+
+Retryable — but this is precisely the case where you cannot know whether the
+work happened, so send an `Idempotency-Key` on the retry. With one, a retry
+replays the original decision instead of producing a second, different one.
+
+Note what the deadline does and does not do. It bounds *your* wait. On the
+server the handler may still be running: the scoring endpoints are synchronous
+and run in a threadpool, and a running thread cannot be stopped safely, so the
+work finishes and its result is discarded.
+
 ### `http-error` — various
 
 A framework-level failure such as 404 or 405, rendered into the same shape as

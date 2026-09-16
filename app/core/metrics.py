@@ -72,6 +72,14 @@ model_decisions_total = Counter(
     registry=REGISTRY,
 )
 
+request_timeouts_total = Counter(
+    "dock_request_timeouts_total",
+    "Requests abandoned at the server deadline. A rising rate means threadpool "
+    "slots are being held by work nobody is waiting for any more.",
+    labelnames=("route",),
+    registry=REGISTRY,
+)
+
 rate_limit_rejections_total = Counter(
     "dock_rate_limit_rejections_total",
     "Requests rejected by the rate limiter.",

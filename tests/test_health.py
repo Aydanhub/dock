@@ -52,3 +52,27 @@ def test_probes_are_not_in_the_public_schema(client):
     assert "/healthz" not in paths
     assert "/metrics" not in paths
     assert "/api/v1/score" in paths
+
+
+class TestMetricsEndpointToggle:
+    """`METRICS_ENDPOINT_ENABLED` controls whether the scrape route is mounted.
+
+    It is named for exposure rather than collection because that is all it
+    does: the collectors are in-process counters and keep running either way.
+    """
+
+    def test_the_scrape_endpoint_is_mounted_by_default(self, client):
+        assert client.get("/metrics").status_code == 200
+
+    def test_it_can_be_taken_off_the_ingress(self, make_client):
+        test_client = make_client(METRICS_ENDPOINT_ENABLED="false")
+
+        assert test_client.get("/metrics").status_code == 404
+
+    def test_probes_survive_the_metrics_endpoint_being_off(self, make_client):
+        """Probes are not optional: without them an orchestrator cannot tell a
+        starting instance from a broken one."""
+        test_client = make_client(METRICS_ENDPOINT_ENABLED="false")
+
+        assert test_client.get("/healthz").status_code == 200
+        assert test_client.get("/readyz").status_code == 200

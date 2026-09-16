@@ -32,6 +32,8 @@ SIGKILL.
 | `REQUIRE_API_KEY=true` + `API_KEYS` | Otherwise the API is open. The service warns at startup. |
 | `OTEL_EXPORTER=otlp` | `console` prints every span to stdout, which is a log-volume incident. |
 | `SHUTDOWN_GRACE_SECONDS` | Must be below the orchestrator's termination grace period. |
+| `REQUEST_TIMEOUT_SECONDS` | Bounds how long a caller waits. Set it below your ingress or client timeout, or theirs fires first and yours never does. |
+| `METRICS_ENDPOINT_ENABLED` | Turn off where `/metrics` would be reachable from a public ingress. Collection keeps running either way. |
 
 The service logs a warning for each of these at startup rather than refusing
 to boot: a misconfigured canary should be visible, not an outage.
@@ -46,6 +48,7 @@ to boot: a misconfigured canary should be visible, not an outage.
 | Model drift | `histogram_quantile(0.5, rate(dock_model_anomaly_score_bucket[1h]))` | The score distribution moved. |
 | Anomaly rate | `rate(dock_model_decisions_total{outcome="anomalous"}[1h])` | A jump means either an attack or a broken model. |
 | Version skew | `count(count by (model_version) (dock_build_info))` | More than 1 during a deploy is fine; sustained is not. |
+| Abandoned work | `rate(dock_request_timeouts_total[5m])` | Threadpool slots being held by work nobody is waiting for. |
 
 The last three are the ones ordinary HTTP monitoring misses. A model that has
 quietly started calling everything anomalous has perfect uptime.
@@ -73,6 +76,13 @@ is the real story.
 
 **429s after a deploy.** The limiter is in-process, so a scale-down multiplies
 each surviving replica's share of traffic without changing its bucket size.
+
+**Rising 504s.** Handlers are exceeding `REQUEST_TIMEOUT_SECONDS`. The timeout
+frees the caller but cannot stop a synchronous handler, so each one leaves a
+threadpool slot occupied until the work finishes. A sustained rate means the
+pool is draining and the next symptom will be requests queueing behind it.
+Check inference latency first — `dock_model_inference_duration_seconds` —
+because that is the part of the request that actually blocks.
 
 **Scores moved but no code changed.** Check `model_version` on `/readyz`
 against the last release. It is a fingerprint of the algorithm, the seed, the

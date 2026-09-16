@@ -60,7 +60,11 @@ class Settings(BaseSettings):
     shutdown_grace_seconds: float = Field(default=10.0, ge=0)
 
     # --- observability ----------------------------------------------------
-    metrics_enabled: bool = True
+    # Named for what it controls: whether the /metrics route is mounted.
+    # Collection itself is always on, because the collectors are in-process
+    # counters that cost nothing to keep. Calling the switch `metrics_enabled`
+    # would promise to stop collection, which it does not do.
+    metrics_endpoint_enabled: bool = True
     otel_exporter: Literal["console", "otlp", "none"] = "console"
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
 

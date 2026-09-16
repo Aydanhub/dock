@@ -14,7 +14,10 @@ from app.core import metrics
 from app.core.config import get_settings
 from app.models.schemas import LivenessResponse, ReadinessResponse
 
+# Two routers, because they are mounted under different conditions: the
+# probes are not optional, the scrape endpoint is.
 router = APIRouter(include_in_schema=False)
+metrics_router = APIRouter(include_in_schema=False)
 
 
 @router.get("/healthz", response_model=LivenessResponse, tags=["ops"])
@@ -58,13 +61,18 @@ def readiness(request: Request, response: Response) -> ReadinessResponse:
     )
 
 
-@router.get("/metrics", tags=["ops"])
+@metrics_router.get("/metrics", tags=["ops"])
 def prometheus_metrics() -> Response:
     """Prometheus scrape endpoint.
 
-    Served from the app's own registry rather than the library's global one,
-    so an imported dependency that registers its own collectors cannot change
-    what this service exposes.
+    Served from the app's own registry rather than the library's global one, so
+    an imported dependency that registers its own collectors cannot change what
+    this service exposes.
+
+    The route is only mounted when `METRICS_ENDPOINT_ENABLED` is true — see
+    `app.main`. Deployments that scrape over a separate network, or that put
+    the service behind an ingress where `/metrics` would be publicly reachable,
+    turn it off there.
     """
     payload, content_type = metrics.render()
     return Response(content=payload, media_type=content_type)

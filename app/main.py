@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app import __version__
+from app.api.ops import metrics_router
 from app.api.ops import router as ops_router
 from app.api.v1.router import api_router
 from app.core import metrics
@@ -25,6 +26,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware, build_route_templates
 from app.core.ratelimit import NullRateLimiter, TokenBucketRateLimiter
 from app.core.telemetry import configure_telemetry
+from app.core.timeout import TimeoutMiddleware
 from app.services.anomaly_service import AnomalyService
 
 configure_logging()
@@ -139,12 +141,30 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if settings.is_local else None,
     )
 
-    # Outermost middleware, so a request id exists before anything else runs
-    # and the access log records a status even when an inner layer raises.
+    # Order matters, and `add_middleware` builds the stack outside-in with the
+    # LAST call outermost. So: the timeout goes on first and ends up inside,
+    # and the request context wraps it — which is what makes a timed-out
+    # request still carry a request id and still appear in the access log with
+    # its 504.
+    app.add_middleware(
+        TimeoutMiddleware,
+        timeout_seconds=settings.request_timeout_seconds,
+        # Probes and scrapes answer in microseconds; if one of them is slow the
+        # right response is the truth, not a 504 that hides it from the
+        # orchestrator making a restart decision.
+        exempt_paths=("/healthz", "/readyz"),
+    )
     app.add_middleware(RequestContextMiddleware)
 
     register_exception_handlers(app)
+
+    # Probes are never optional: without them an orchestrator cannot tell a
+    # starting instance from a broken one.
     app.include_router(ops_router)
+    if settings.metrics_endpoint_enabled:
+        app.include_router(metrics_router)
+    else:
+        logger.info("metrics endpoint not mounted (METRICS_ENDPOINT_ENABLED=false)")
     app.include_router(api_router, prefix="/api/v1")
     configure_telemetry(app)
 

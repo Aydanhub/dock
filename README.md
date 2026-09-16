@@ -37,11 +37,12 @@ live audience, `make demo-paced` advances one section per keypress, and
 | **Metrics** | Prometheus at `/metrics`, labelled on the route template so cardinality stays bounded |
 | **Tracing** | OpenTelemetry, with a hand-written span around inference so model time is separable from request time |
 | **Probes** | `/healthz` and `/readyz` as genuinely different questions |
+| **Deadlines** | A real time-to-first-byte timeout, written at the ASGI layer because the obvious version returns 504 without shortening the wait |
 | **Shutdown** | Readiness fails first, then in-flight requests drain |
 | **Model** | Versioned by a fingerprint of algorithm, hyperparameters and library versions; stamped on every response |
 | **Batch** | One vectorised model call per batch — **94× faster** than the equivalent loop, measured |
 | **Evals** | Labelled regression set gated on decisions and score drift, with latency reported |
-| **Tests** | 115 tests, 96% coverage, including property-based and concurrency suites |
+| **Tests** | 134 tests, 96% coverage, including property-based and concurrency suites |
 | **CI** | Lint, mypy strict, tests on 3.11–3.13, drift gate, dependency audit, image build plus a real smoke test |
 | **Deploy** | Multi-stage non-root image, compose stack with Jaeger and Prometheus, Kubernetes manifests with probes, HPA and a PDB |
 
@@ -93,7 +94,7 @@ make docker-run
 | `GET` | `/api/v1/health` | Human-readable: version, model version, uptime. |
 | `GET` | `/healthz` | Liveness. Restart on failure. |
 | `GET` | `/readyz` | Readiness. Pull from rotation on failure, do not restart. |
-| `GET` | `/metrics` | Prometheus scrape. |
+| `GET` | `/metrics` | Prometheus scrape. Mounted unless `METRICS_ENDPOINT_ENABLED=false`. |
 
 Request headers: `X-API-Key` when auth is on, `Idempotency-Key` to make a retry
 safe, `X-Request-ID` to carry a correlation id in from a gateway.
@@ -131,7 +132,7 @@ app/
 demo/       # the guided tour and its recorded transcript
 docs/       # architecture, operations runbook, error catalogue, ADRs
 deploy/k8s/ # manifests with probes, HPA, PDB
-tests/      # 115 tests: contract, unit, property-based, concurrency
+tests/      # 134 tests: contract, unit, property-based, concurrency
 ```
 
 ## Design notes
@@ -171,6 +172,17 @@ that hammers it from sixteen threads.
 **Rate limiting is per API key, after authentication.** Limiting by IP lets one
 client behind a NAT gateway exhaust everyone else's quota, and lets a client
 rotating addresses escape its own.
+
+**The request deadline is ASGI middleware, and that is not a style choice.**
+Written the obvious way — `asyncio.wait_for` inside a `BaseHTTPMiddleware` —
+it returns a 504 after waiting exactly as long as it would have waited anyway,
+because `call_next` runs inside a task group that will not release early.
+Measured here: 2003ms on a 300ms deadline, versus 303ms at the ASGI layer. The
+deadline covers time to the first byte, so a response that has started
+streaming is left to finish rather than truncated. And it bounds the caller's
+wait, not the server's: a sync handler cannot be cancelled, so the work runs on
+and its result is discarded, which is what
+[`dock_request_timeouts_total`](docs/operations.md) is for.
 
 **The model has a version.** A fingerprint of the algorithm, hyperparameters,
 feature order, and the scikit-learn and numpy versions — stamped on every

@@ -16,3 +16,4 @@ the constraint that justified it.
 | [0005](0005-train-in-lifespan.md) | The model trains in the lifespan hook, in a worker thread |
 | [0006](0006-route-template-metric-labels.md) | Metrics are labelled with the route template |
 | [0007](0007-sync-handlers-for-cpu-work.md) | Scoring handlers are sync, not async |
+| [0008](0008-request-deadline-at-the-asgi-layer.md) | The request deadline is ASGI middleware, not BaseHTTPMiddleware |
