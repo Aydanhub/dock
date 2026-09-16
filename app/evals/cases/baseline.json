@@ -1,0 +1,16 @@
+{
+  "model_version": "22acf1f28552",
+  "recorded_at": "2026-09-16T07:52:58Z",
+  "scores": {
+    "typical_lunch_purchase": -0.2256,
+    "typical_evening_purchase": -0.2012,
+    "small_morning_coffee": -0.1398,
+    "routine_weekly_shop": -0.0385,
+    "modest_late_evening": -0.1564,
+    "new_device_small_amount": -0.0309,
+    "large_amount_middle_of_night": 0.1424,
+    "huge_amount_normal_hour": 0.0129,
+    "high_risk_merchant_new_device_4am": 0.1416,
+    "extreme_everything": 0.1435
+  }
+}

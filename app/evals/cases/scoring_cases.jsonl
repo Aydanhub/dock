@@ -1,0 +1,10 @@
+{"case_id": "typical_lunch_purchase", "input": {"amount": 38.0, "hour_of_day": 13, "merchant_risk_score": 0.05, "is_new_device": false}, "expected_anomalous": false}
+{"case_id": "typical_evening_purchase", "input": {"amount": 62.0, "hour_of_day": 19, "merchant_risk_score": 0.12, "is_new_device": false}, "expected_anomalous": false}
+{"case_id": "small_morning_coffee", "input": {"amount": 12.5, "hour_of_day": 8, "merchant_risk_score": 0.02, "is_new_device": false}, "expected_anomalous": false}
+{"case_id": "routine_weekly_shop", "input": {"amount": 140.0, "hour_of_day": 17, "merchant_risk_score": 0.18, "is_new_device": false}, "expected_anomalous": false}
+{"case_id": "modest_late_evening", "input": {"amount": 55.0, "hour_of_day": 22, "merchant_risk_score": 0.1, "is_new_device": false}, "expected_anomalous": false}
+{"case_id": "new_device_small_amount", "input": {"amount": 20.0, "hour_of_day": 12, "merchant_risk_score": 0.08, "is_new_device": true}, "expected_anomalous": false}
+{"case_id": "large_amount_middle_of_night", "input": {"amount": 12000.0, "hour_of_day": 3, "merchant_risk_score": 0.9, "is_new_device": true}, "expected_anomalous": true}
+{"case_id": "huge_amount_normal_hour", "input": {"amount": 48000.0, "hour_of_day": 15, "merchant_risk_score": 0.3, "is_new_device": false}, "expected_anomalous": true}
+{"case_id": "high_risk_merchant_new_device_4am", "input": {"amount": 900.0, "hour_of_day": 4, "merchant_risk_score": 0.97, "is_new_device": true}, "expected_anomalous": true}
+{"case_id": "extreme_everything", "input": {"amount": 250000.0, "hour_of_day": 2, "merchant_risk_score": 1.0, "is_new_device": true}, "expected_anomalous": true}

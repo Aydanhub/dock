@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dock
+  labels:
+    app.kubernetes.io/name: dock
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0   # never drop below the current capacity mid-deploy
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dock
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dock
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8000"
+    spec:
+      # Must exceed the app's SHUTDOWN_GRACE_SECONDS, or the kubelet escalates
+      # to SIGKILL mid-drain and in-flight requests are dropped on every deploy.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dock
+          image: ghcr.io/aydanhub/dock:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: dock-config
+            - secretRef:
+                name: dock-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          # Liveness: is the process alive. Checks nothing else on purpose —
+          # a liveness probe that tests dependencies turns a downstream outage
+          # into a restart loop across every replica at once.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # Readiness: can this pod serve. Fails while the model trains and
+          # again during shutdown, so traffic stops arriving before the drain.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          # Startup: gives training as long as it needs without loosening the
+          # liveness timeouts that protect a running pod.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 3
+            failureThreshold: 20
+
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              # No CPU limit on purpose: CFS throttling on a latency-sensitive
+              # service produces tail latency that looks like a bug in the app.
+              # The request reserves capacity; the HPA handles growth.
+              memory: 1Gi
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # readOnlyRootFilesystem is on, so anything that needs to write needs an
+        # explicit writable mount.
+        - name: tmp
+          emptyDir: {}

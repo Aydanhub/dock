@@ -1,0 +1,43 @@
+name: dock
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: local
+      LOG_LEVEL: INFO
+      OTEL_EXPORTER: otlp
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      RATE_LIMIT_REQUESTS: "120"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    # Above the app's own SHUTDOWN_GRACE_SECONDS, so the drain finishes before
+    # Docker escalates to SIGKILL.
+    stop_grace_period: 20s
+    depends_on:
+      - jaeger
+
+  # `docker compose up` gives you the service plus somewhere for its telemetry
+  # to land. Traces at http://localhost:16686, metrics at http://localhost:9090.
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"    # OTLP gRPC
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - app

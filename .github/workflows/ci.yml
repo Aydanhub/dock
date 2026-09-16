@@ -1,0 +1,170 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push supersedes the run in progress. Without this, a busy branch keeps
+# runners occupied producing results nobody will read.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  FORCE_COLOR: "1"
+
+jobs:
+  quality:
+    name: lint · types · tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check --output-format=github .
+
+      - name: Type-check
+        run: mypy app
+
+      - name: Test
+        run: pytest -q --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=85
+
+      - name: Upload coverage
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          retention-days: 7
+
+  eval:
+    name: model drift gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      # Separate from the test job on purpose: a failure here means the model's
+      # decisions moved, not that the code is broken. The two need different
+      # responses, so they need to be distinguishable at a glance.
+      - name: Check decisions and score drift against the baseline
+        run: python -m app.evals.runner --no-colour --report eval_reports/ci.json
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval_reports/ci.json
+          retention-days: 30
+
+  security:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" pip-audit
+
+      - name: Audit installed dependencies for known advisories
+        run: pip-audit --strict --progress-spinner off
+
+  docker:
+    name: image build and smoke test
+    runs-on: ubuntu-latest
+    needs: [quality, eval]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: dock:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Building an image only proves it compiles. This proves it serves:
+      # the container has to start, train, pass readiness, and return a real
+      # scoring decision before the job is allowed to pass.
+      - name: Start the container
+        run: |
+          docker run -d --name dock-ci -p 8000:8000 \
+            -e ENVIRONMENT=local -e OTEL_EXPORTER=none dock:ci
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/readyz > /dev/null 2>&1; then
+              echo "ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::container never became ready"
+          docker logs dock-ci
+          exit 1
+
+      - name: Smoke-test the API
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:8000/healthz | grep -q '"alive"'
+
+          response=$(curl -fsS -X POST http://localhost:8000/api/v1/score \
+            -H 'Content-Type: application/json' \
+            -d '{"amount":15000,"hour_of_day":3,"merchant_risk_score":0.95,"is_new_device":true}')
+          echo "$response"
+          echo "$response" | grep -q '"is_anomalous":true'
+
+          curl -fsS http://localhost:8000/metrics | grep -q '^dock_build_info'
+
+      - name: Verify it shuts down gracefully
+        run: |
+          set -euo pipefail
+          docker stop --timeout 20 dock-ci
+          # The lifespan shutdown hook must have run: a container that is
+          # SIGKILLed mid-drain drops in-flight requests on every deploy.
+          docker logs dock-ci 2>&1 | grep -q 'shutdown complete'
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs dock-ci || true
