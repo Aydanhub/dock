@@ -104,8 +104,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]" pip-audit
 
+      # --skip-editable leaves out the project itself, which is installed
+      # editable and has no PyPI release to look up. --strict is deliberately
+      # off with it: --strict fails on *any* dependency that could not be
+      # collected, which includes that deliberate skip, so together they turn
+      # "this local package is not published" into a failed security audit.
+      # Real advisories still fail the job — pip-audit exits non-zero on a
+      # vulnerability regardless of --strict.
       - name: Audit installed dependencies for known advisories
-        run: pip-audit --strict --progress-spinner off
+        run: pip-audit --skip-editable --progress-spinner off
 
   docker:
     name: image build and smoke test

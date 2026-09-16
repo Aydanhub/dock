@@ -22,7 +22,8 @@ and its own recorded baseline. It checks three things:
 1. **Decisions** — every labelled case still gets its label.
 2. **Score drift** — scores that moved more than a threshold from the baseline,
    even when the decision has not flipped yet.
-3. **Latency** — p95 against a budget.
+3. **Latency** — p95 is measured and reported on every run, but only fails
+   the run when a budget is passed explicitly.
 
 CI runs both `pytest` and `make eval`, and fails on either.
 
@@ -37,6 +38,15 @@ CI runs both `pytest` and `make eval`, and fails on either.
   is a failure; too loose and a real regression slips through. `0.05` on this
   score scale is wide enough to absorb floating-point noise across platforms
   and narrow enough to catch a retrain.
+- **Latency is reported, not gated by default**, and that asymmetry is
+  deliberate. Decisions and drift are deterministic: the same inputs give the
+  same answer on any machine, so gating on them is portable. Wall-clock latency
+  is not — the same model takes single-digit milliseconds on a laptop and
+  roughly ten times that on a shared CI runner. A budget tight enough to catch
+  a real regression fails constantly on CI, and one loose enough to pass CI
+  catches nothing. Either way people learn to ignore the gate, which is worse
+  than not having one. `--latency-budget-ms` exists for a performance job on
+  controlled hardware, where the number means something.
 
 ## When this stops being right
 

@@ -36,8 +36,8 @@ run is in [demo/transcript.txt](demo/transcript.txt).
 | **Shutdown** | Readiness fails first, then in-flight requests drain |
 | **Model** | Versioned by a fingerprint of algorithm, hyperparameters and library versions; stamped on every response |
 | **Batch** | One vectorised model call per batch — **94× faster** than the equivalent loop, measured |
-| **Evals** | Labelled regression set with decision, score-drift and latency gates |
-| **Tests** | 114 tests, 96% coverage, including property-based and concurrency suites |
+| **Evals** | Labelled regression set gated on decisions and score drift, with latency reported |
+| **Tests** | 115 tests, 96% coverage, including property-based and concurrency suites |
 | **CI** | Lint, mypy strict, tests on 3.11–3.13, drift gate, dependency audit, image build plus a real smoke test |
 | **Deploy** | Multi-stage non-root image, compose stack with Jaeger and Prometheus, Kubernetes manifests with probes, HPA and a PDB |
 
@@ -126,7 +126,7 @@ app/
 demo/       # the guided tour and its recorded transcript
 docs/       # architecture, operations runbook, error catalogue, ADRs
 deploy/k8s/ # manifests with probes, HPA, PDB
-tests/      # 114 tests: contract, unit, property-based, concurrency
+tests/      # 115 tests: contract, unit, property-based, concurrency
 ```
 
 ## Design notes
@@ -139,9 +139,12 @@ would make it wrong later. The short version:
 The eval harness answers "does the model still make the same calls". They fail
 for different reasons and get fixed by different people — a test failure means
 someone broke the code, an eval failure means the model changed. The harness
-checks decisions, score drift against a recorded baseline, and p95 latency, and
-the baseline only moves on an explicit `--update-baseline`. A gate that
-refreshes its own baseline always passes.
+gates on decisions and on score drift against a recorded baseline, and the
+baseline only moves on an explicit `--update-baseline` — a gate that refreshes
+its own baseline always passes. Latency is measured and printed but not gated,
+because a wall-clock budget does not travel from a laptop to a shared CI
+runner; `--latency-budget-ms` turns it into a gate on hardware where the number
+means something.
 
 **Liveness and readiness are different questions.** Liveness checks the process
 and nothing else, because a liveness probe that tests dependencies turns a

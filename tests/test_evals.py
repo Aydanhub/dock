@@ -71,7 +71,18 @@ def test_a_flipped_decision_fails_the_run(tmp_path, service):
     assert len(report.failed_decisions) == len(cases)
 
 
-def test_a_latency_regression_fails_the_run(service):
+def test_latency_is_reported_but_not_gated_by_default(service):
+    """A wall-clock budget is not portable: the same model takes single-digit
+    milliseconds on a laptop and ten times that on a shared CI runner. So p95
+    is always measured, and only gates the run when a budget is asked for."""
+    report = run_eval(DEFAULT_CASES_PATH, DEFAULT_BASELINE_PATH, service=service)
+
+    assert report.latency_p95_ms > 0
+    assert report.latency_budget_ms is None
+    assert report.within_latency_budget is True
+
+
+def test_an_explicit_latency_budget_does_gate_the_run(service):
     report = run_eval(
         DEFAULT_CASES_PATH, DEFAULT_BASELINE_PATH, service=service, latency_budget_ms=0.0
     )
