@@ -1,22 +1,22 @@
 
   Dock — live demo
-  every response below is a real HTTP call to http://127.0.0.1:51039
+  every response below is a real HTTP call to http://127.0.0.1:52145
 
 ── 1. Startup and readiness ──────────────────────────────────────────
    The model trains once, before traffic. Liveness and readiness are separate signals.
 
-   ready after 0.77s
+   ready after 1.05s
 
-     {"timestamp": "2026-09-16T08:02:07.676735+00:00", "level": "INFO", "logger": "app.services.anomaly_service", "message": "model trained", "model_version": "22acf1f28552", "training_duration_ms": 81.514, "training_samples": 2000}
-     {"timestamp": "2026-09-16T08:02:07.676878+00:00", "level": "INFO", "logger": "app.main", "message": "startup complete", "version": "1.0.0", "model_version": "22acf1f28552", "environment": "local", "auth_active": true, "rate_limit_enabled": true}
+     {"timestamp": "2026-09-16T08:51:16.885526+00:00", "level": "INFO", "logger": "app.services.anomaly_service", "message": "model trained", "model_version": "22acf1f28552", "training_duration_ms": 83.796, "training_samples": 2000}
+     {"timestamp": "2026-09-16T08:51:16.885697+00:00", "level": "INFO", "logger": "app.main", "message": "startup complete", "version": "1.0.0", "model_version": "22acf1f28552", "environment": "local", "auth_active": true, "rate_limit_enabled": true}
 
    $ GET /healthz
-     HTTP 200   x-request-id: 4529dada-1913-415e-9cd5-1b02c39b1440
+     HTTP 200   x-request-id: 5e50ac64-4e45-4999-9c06-ff11e8ddd877
      {
        "status": "alive"
      }
    $ GET /readyz
-     HTTP 200   x-request-id: 2398d3ed-7099-4565-9bc3-86b2a2063020
+     HTTP 200   x-request-id: 099350b5-2819-458e-816d-29c2cfc9a31c
      {
        "status": "ready",
        "app_name": "dock",
@@ -33,61 +33,61 @@
    Lunchtime card payment, known device, low-risk merchant.
 
    $ POST /api/v1/score   {"amount": 42.5, "hour_of_day": 13, "merchant_risk_score": 0.08, "is_new_device": false}
-     HTTP 200   ratelimit-remaining: 7  x-request-id: 05d355ac-ff77-41b8-93ad-20ebb5f4d8c1
+     HTTP 200   ratelimit-remaining: 7  x-request-id: 2ae97554-2d62-4e05-bcb4-9e3e747ab4d1
      {
-       "request_id": "dd2abca0-368c-4b8a-90a7-8b5f86ed9504",
+       "request_id": "b4ce457e-4cf3-4cac-88d7-aabf973978fe",
        "is_anomalous": false,
        "anomaly_score": -0.2422,
        "model_version": "22acf1f28552",
-       "latency_ms": 6.452
+       "latency_ms": 6.601
      }
 
 ── 3. A suspicious transaction ───────────────────────────────────────
    18,400 at 3am, high-risk merchant, device never seen before.
 
    $ POST /api/v1/score   {"amount": 18400.0, "hour_of_day": 3, "merchant_risk_score": 0.96, "is_new_device": true}
-     HTTP 200   ratelimit-remaining: 6  x-request-id: 64ee717b-1341-40a3-a091-4a189a47c255
+     HTTP 200   ratelimit-remaining: 6  x-request-id: ec1edf17-212d-4a90-a24d-4921428fe4be
      {
-       "request_id": "c2496388-ee43-4674-94a9-5764399d9923",
+       "request_id": "6bc7ae72-be34-4259-88f4-6409d500acf4",
        "is_anomalous": true,
        "anomaly_score": 0.1424,
        "model_version": "22acf1f28552",
-       "latency_ms": 5.999
+       "latency_ms": 6.167
      }
 
 ── 4. Request correlation ────────────────────────────────────────────
    Every log line written while handling that call carries its request id.
 
-   $ grep 64ee717b-1341-40a3-a091-4a189a47c255 server.log
+   $ grep ec1edf17-212d-4a90-a24d-4921428fe4be server.log
 
-     {"timestamp": "2026-09-16T08:02:07.726847+00:00", "level": "INFO", "logger": "app.api.v1.endpoints.scoring", "message": "scored event", "scoring_id": "c2496388-ee43-4674-94a9-5764399d9923", "is_anomalous": true, "anomaly_score": 0.1424, "model_version": "22acf1f28552", "inference_ms": 5.999, "request_id": "64ee717b-1341-40a3-a091-4a189a47c255"}
-     {"timestamp": "2026-09-16T08:02:07.727027+00:00", "level": "INFO", "logger": "app.core.middleware", "message": "request completed", "method": "POST", "path": "/api/v1/score", "route": "/api/v1/score", "status": 200, "duration_ms": 6.781, "request_id": "64ee717b-1341-40a3-a091-4a189a47c255"}
+     {"timestamp": "2026-09-16T08:51:16.942109+00:00", "level": "INFO", "logger": "app.api.v1.endpoints.scoring", "message": "scored event", "scoring_id": "6bc7ae72-be34-4259-88f4-6409d500acf4", "is_anomalous": true, "anomaly_score": 0.1424, "model_version": "22acf1f28552", "inference_ms": 6.167, "request_id": "ec1edf17-212d-4a90-a24d-4921428fe4be"}
+     {"timestamp": "2026-09-16T08:51:16.942317+00:00", "level": "INFO", "logger": "app.core.middleware", "message": "request completed", "method": "POST", "path": "/api/v1/score", "route": "/api/v1/score", "status": 200, "duration_ms": 6.997, "request_id": "ec1edf17-212d-4a90-a24d-4921428fe4be"}
 
 ── 5. Batch scoring ──────────────────────────────────────────────────
    One vectorised model call for the whole batch, not one call per event.
 
    $ POST /api/v1/score/batch   (4 events)
-     HTTP 200   ratelimit-remaining: 5  x-request-id: 3afc4059-b1cb-4719-bd50-eefaf033d329
+     HTTP 200   ratelimit-remaining: 5  x-request-id: d95f2d3b-2e7a-49dd-9db0-5b6ae9e33695
      {
-       "request_id": "a07c539e-7c74-426c-a1a0-785e44ad2054",
+       "request_id": "65392643-7e3e-4daf-b405-2c18b6c31c9f",
        "model_version": "22acf1f28552",
        "count": 4,
        "anomalous_count": 2,
-       "latency_ms": 6.044
+       "latency_ms": 6.29
      }
 
 ── 6. Errors are RFC 9457 problem documents ──────────────────────────
    One error shape for every failure, always carrying the request id.
 
    $ POST /api/v1/score   (amount: -1)
-     HTTP 422   x-request-id: 828984d6-2783-4377-880f-2cf277102a80
+     HTTP 422   x-request-id: 68e53379-97fb-4334-b44c-5a43f15cbafd
      {
        "type": "https://github.com/Aydanhub/dock/blob/main/docs/errors.md#validation-failed",
        "title": "Unprocessable Entity",
        "status": 422,
        "detail": "The request body failed validation.",
        "instance": "/api/v1/score",
-       "request_id": "828984d6-2783-4377-880f-2cf277102a80",
+       "request_id": "68e53379-97fb-4334-b44c-5a43f15cbafd",
        "errors": [
          {
            "field": "body.amount",
@@ -101,14 +101,14 @@
    The same call without a key. The key itself is never echoed or logged.
 
    $ POST /api/v1/score   (no X-API-Key)
-     HTTP 401   x-request-id: bf028c91-9ba3-4c3e-b6b6-ccf76ceb6ed9
+     HTTP 401   x-request-id: 76c91a10-96db-45f5-8f9a-62de89f4ca10
      {
        "type": "https://github.com/Aydanhub/dock/blob/main/docs/errors.md#unauthenticated",
        "title": "Unauthorized",
        "status": 401,
        "detail": "Missing X-API-Key header.",
        "instance": "/api/v1/score",
-       "request_id": "bf028c91-9ba3-4c3e-b6b6-ccf76ceb6ed9"
+       "request_id": "76c91a10-96db-45f5-8f9a-62de89f4ca10"
      }
 
 ── 8. Rate limiting is per caller ────────────────────────────────────
@@ -131,22 +131,22 @@
    A client that times out and retries must not get a second, different decision.
 
    $ POST /api/v1/score   Idempotency-Key: payment-88213
-     HTTP 200   ratelimit-remaining: 7  x-request-id: a4ebf158-0ecd-45d5-bdba-487f9422ccc4
+     HTTP 200   ratelimit-remaining: 7  x-request-id: 7cd4d145-1eac-4a45-b50e-9b8a7465ecf3
      {
-       "request_id": "f471ce37-3689-4977-8abd-3da12a4a4cba",
+       "request_id": "d8c5ef1c-a9d3-40e0-8411-55d4ef1d87da",
        "is_anomalous": true,
        "anomaly_score": 0.1424
      }
    $ POST /api/v1/score   (timed out, retried with the same key)
-     HTTP 200   idempotency-replayed: true  ratelimit-remaining: 6  x-request-id: 0a96b294-533b-49d4-af64-88d25d2d4bf9
+     HTTP 200   idempotency-replayed: true  ratelimit-remaining: 6  x-request-id: 68da3fd8-e42f-4df7-88f1-cea6e7d33f66
      {
-       "request_id": "f471ce37-3689-4977-8abd-3da12a4a4cba",
+       "request_id": "d8c5ef1c-a9d3-40e0-8411-55d4ef1d87da",
        "is_anomalous": true,
        "anomaly_score": 0.1424
      }
    → the original decision was replayed, not recomputed
    $ POST /api/v1/score   (same key, different body)
-     HTTP 422   x-request-id: b7e02ccc-bc7a-42ed-9809-7bce54442c44
+     HTTP 422   x-request-id: 406571ee-20dc-46f5-b627-9141bd017d79
      {
        "title": "Idempotency Key Reused",
        "status": 422,
@@ -175,7 +175,7 @@
    $ kill -TERM  (what `docker stop` and Kubernetes send)
 
      INFO:     Shutting down
-     {"timestamp": "2026-09-16T08:02:07.991251+00:00", "level": "INFO", "logger": "app.main", "message": "shutdown complete"}
+     {"timestamp": "2026-09-16T08:51:17.193896+00:00", "level": "INFO", "logger": "app.main", "message": "shutdown complete"}
      INFO:     Application shutdown complete.
 
    → the shutdown hook ran and the app drained before the process exited

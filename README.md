@@ -18,6 +18,10 @@ scoring, RFC 9457 errors, per-caller rate limiting, idempotent retries, the
 Prometheus scrape, and a graceful shutdown. Nothing is stubbed; the recorded
 run is in [demo/transcript.txt](demo/transcript.txt).
 
+It runs straight through in about a second, which is too fast to narrate. For a
+live audience, `make demo-paced` advances one section per keypress, and
+`--pace 2.5` pauses a fixed interval instead.
+
 ---
 
 ## What is actually in here
@@ -70,10 +74,11 @@ curl -X POST localhost:8000/api/v1/score \
 Everything else:
 
 ```bash
-make check    # lint + types + tests with coverage floor + eval gate
-make demo     # the guided tour, against a real server
-make test     # pytest
-make eval     # model decisions and drift against the baseline
+make check       # lint + types + tests with coverage floor + eval gate
+make demo        # the guided tour, against a real server
+make demo-paced  # the same tour, one section per keypress
+make test        # pytest
+make eval        # model decisions and drift against the baseline
 make docker-run
 ```
 

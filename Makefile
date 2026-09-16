@@ -1,4 +1,4 @@
-.PHONY: help install dev run test test-cov eval eval-update lint fmt typecheck check demo docker-build docker-run clean
+.PHONY: help install dev run test test-cov eval eval-update lint fmt typecheck check demo demo-paced docker-build docker-run clean
 
 VENV := ./.venv/bin
 
@@ -42,6 +42,9 @@ check: lint typecheck test-cov eval  ## Everything CI runs, in one command
 
 demo:  ## Start a real server and walk through every feature
 	$(VENV)/python demo/run_demo.py
+
+demo-paced:  ## The same tour, one section per keypress — for presenting
+	$(VENV)/python demo/run_demo.py --pace
 
 docker-build:  ## Build the production image
 	docker build -t dock:local .

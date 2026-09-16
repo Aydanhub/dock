@@ -6,7 +6,8 @@ starts and stops, and the log lines quoted are read back out of that process's
 own stdout. Nothing is stubbed and nothing is pre-recorded — a demo that
 cannot fail is not evidence that anything works.
 
-    make demo
+    make demo              # straight through, about a second
+    make demo-paced        # one section at a time, for a live audience
 
 Three API keys are configured so that each section gets its own rate-limit
 bucket. That is not a workaround: it is the behaviour being demonstrated in
@@ -15,6 +16,7 @@ section 8, where one caller burns through its quota and another is unaffected.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import signal
@@ -39,6 +41,16 @@ BOLD, DIM, GREEN, RED, YELLOW, CYAN, RESET = (
     "\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[0m",
 )
 
+# Sentinel for a bare --pace, which means "the presenter presses Enter".
+MANUAL_PACE = "manual"
+FALLBACK_PACE_SECONDS = 2.5
+
+# How long to wait before explaining the wait. Under this, a spinner is enough;
+# past it the audience deserves to know why nothing is happening.
+COLD_START_HINT_AFTER = 3.0
+
+SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
 NORMAL_EVENT = {
     "amount": 42.5,
     "hour_of_day": 13,
@@ -57,7 +69,54 @@ def paint(text: str, code: str) -> str:
     return text if os.environ.get("NO_COLOR") else f"{code}{text}{RESET}"
 
 
-def step(number: int, title: str, why: str) -> None:
+class Pacer:
+    """Controls how fast the tour advances between sections.
+
+    The default is not to pause at all. The whole run then takes about a
+    second, which is right when the output is being captured, diffed, or read
+    afterwards — and far too fast for a live audience, who get 185 lines in one
+    blink. `--pace` is for that case: either the presenter presses Enter, or a
+    fixed interval elapses between sections.
+    """
+
+    def __init__(self, spec: str | None) -> None:
+        self.manual = False
+        self.seconds = 0.0
+
+        if spec is None:
+            return
+        if spec == MANUAL_PACE:
+            # `input()` on a redirected stdin hits EOF immediately, which would
+            # fast-forward the entire tour rather than pause it. Somebody
+            # piping a paced run into a file means to slow it down, so fall
+            # back to a timed pause instead of silently ignoring the flag.
+            if sys.stdin.isatty():
+                self.manual = True
+            else:
+                self.seconds = FALLBACK_PACE_SECONDS
+            return
+        self.seconds = float(spec)
+
+    def between_steps(self) -> None:
+        if self.manual:
+            print(paint("   ⏎ press Enter for the next section", DIM), end="", flush=True)
+            try:
+                input()
+            except (EOFError, KeyboardInterrupt):
+                # Stop asking rather than spinning on a closed stdin.
+                self.manual = False
+                print()
+            else:
+                # Erase the prompt so the finished output reads as a clean
+                # transcript rather than a list of things somebody pressed.
+                print("\033[F\033[2K", end="")
+        elif self.seconds > 0:
+            time.sleep(self.seconds)
+
+
+def step(pacer: Pacer, number: int, title: str, why: str) -> None:
+    if number > 1:
+        pacer.between_steps()
     print()
     rule = "─" * max(3, 64 - len(title) - len(str(number)))
     print(paint(f"── {number}. {title} ", BOLD) + paint(rule, DIM))
@@ -159,23 +218,95 @@ def app_log_lines(log_path: Path, **match: Any) -> list[str]:
 
 
 def wait_until_ready(
-    client: httpx.Client, server: subprocess.Popen[bytes], timeout: float = 60.0
+    client: httpx.Client, server: subprocess.Popen[bytes], timeout: float = 120.0
 ) -> float:
-    """Polls readiness, which is exactly what an orchestrator does on deploy."""
+    """Polls readiness, which is exactly what an orchestrator does on deploy.
+
+    The polling is visible. On a warm machine this returns in under a second,
+    but the first run after a fresh install spends around half a minute
+    importing scikit-learn and scipy from a cold disk cache — and half a minute
+    of an unexplained blank terminal in front of an audience reads as a crash,
+    not as a startup. So the wait shows a spinner with elapsed time, and once
+    it is long enough to worry anyone, it says why.
+
+    Animation only when stdout is a terminal: carriage returns would otherwise
+    fill a captured transcript or a CI log with redrawn spinner frames.
+    """
     started = time.perf_counter()
-    while time.perf_counter() - started < timeout:
+    animated = sys.stdout.isatty()
+    tick = 0
+    printed_width = 0
+
+    while True:
+        elapsed = time.perf_counter() - started
+        if elapsed >= timeout:
+            raise TimeoutError(f"server never became ready within {timeout:.0f}s")
         if server.poll() is not None:
             raise RuntimeError(f"server exited early with code {server.returncode}")
+
         try:
-            if client.get("/readyz").status_code == 200:
+            if client.get("/readyz", timeout=2.0).status_code == 200:
+                if animated and printed_width:
+                    print(" " * printed_width, end="\r", flush=True)
                 return time.perf_counter() - started
         except httpx.TransportError:
             pass
+
+        if animated:
+            note = (
+                "training the model"
+                if elapsed < COLD_START_HINT_AFTER
+                else "first run imports scikit-learn from a cold disk cache; "
+                "later runs start in under a second"
+            )
+            line = f"   {SPINNER[tick % len(SPINNER)]} waiting for readiness — {note}  {elapsed:4.1f}s"
+            print(paint(line.ljust(printed_width), DIM), end="\r", flush=True)
+            printed_width = len(line)
+            tick += 1
+
         time.sleep(0.1)
-    raise TimeoutError("server never became ready")
 
 
-def main() -> int:
+def _pace_spec(value: str) -> str:
+    # argparse runs `const` through `type` too, so a bare --pace arrives here
+    # as the sentinel and must be let through rather than parsed as a number.
+    if value == MANUAL_PACE:
+        return value
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"--pace expects a number of seconds, got {value!r}"
+        ) from None
+    if seconds < 0:
+        raise argparse.ArgumentTypeError("--pace cannot be negative")
+    return value
+
+
+def parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="python demo/run_demo.py",
+        description="Walk through every feature of the service against a real server.",
+    )
+    parser.add_argument(
+        "--pace",
+        nargs="?",
+        type=_pace_spec,
+        const=MANUAL_PACE,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "Pause between sections so a live audience can keep up. Bare --pace waits "
+            "for Enter, so the presenter sets the pace; --pace 2.5 pauses that many "
+            "seconds instead. Without it the tour runs straight through in about a second."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    pacer = Pacer(args.pace)
     port = free_port()
     base_url = f"http://127.0.0.1:{port}"
     main_auth = {"X-API-Key": MAIN_KEY}
@@ -189,7 +320,7 @@ def main() -> int:
     try:
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
             # 1 ------------------------------------------------------------
-            step(1, "Startup and readiness",
+            step(pacer, 1, "Startup and readiness",
                  "The model trains once, before traffic. Liveness and readiness are separate signals.")
             elapsed = wait_until_ready(client, server)
             print(f"   {paint('ready after', DIM)} {elapsed:.2f}s\n")
@@ -200,7 +331,7 @@ def main() -> int:
             show("GET /readyz", client.get("/readyz"))
 
             # 2 ------------------------------------------------------------
-            step(2, "A routine transaction",
+            step(pacer, 2, "A routine transaction",
                  "Lunchtime card payment, known device, low-risk merchant.")
             show(
                 "POST /api/v1/score   " + json.dumps(NORMAL_EVENT),
@@ -208,20 +339,20 @@ def main() -> int:
             )
 
             # 3 ------------------------------------------------------------
-            step(3, "A suspicious transaction",
+            step(pacer, 3, "A suspicious transaction",
                  "18,400 at 3am, high-risk merchant, device never seen before.")
             suspicious = client.post("/api/v1/score", json=SUSPICIOUS_EVENT, headers=main_auth)
             show("POST /api/v1/score   " + json.dumps(SUSPICIOUS_EVENT), suspicious)
 
             # 4 ------------------------------------------------------------
-            step(4, "Request correlation",
+            step(pacer, 4, "Request correlation",
                  "Every log line written while handling that call carries its request id.")
             request_id = suspicious.headers["x-request-id"]
             print(f"   {paint('$', CYAN)} grep {request_id} server.log\n")
             quote_log(app_log_lines(log_path, request_id=request_id))
 
             # 5 ------------------------------------------------------------
-            step(5, "Batch scoring",
+            step(pacer, 5, "Batch scoring",
                  "One vectorised model call for the whole batch, not one call per event.")
             batch = [NORMAL_EVENT, SUSPICIOUS_EVENT, NORMAL_EVENT, SUSPICIOUS_EVENT]
             show(
@@ -231,7 +362,7 @@ def main() -> int:
             )
 
             # 6 ------------------------------------------------------------
-            step(6, "Errors are RFC 9457 problem documents",
+            step(pacer, 6, "Errors are RFC 9457 problem documents",
                  "One error shape for every failure, always carrying the request id.")
             show(
                 "POST /api/v1/score   (amount: -1)",
@@ -239,12 +370,12 @@ def main() -> int:
             )
 
             # 7 ------------------------------------------------------------
-            step(7, "API key enforcement",
+            step(pacer, 7, "API key enforcement",
                  "The same call without a key. The key itself is never echoed or logged.")
             show("POST /api/v1/score   (no X-API-Key)", client.post("/api/v1/score", json=NORMAL_EVENT))
 
             # 8 ------------------------------------------------------------
-            step(8, "Rate limiting is per caller",
+            step(pacer, 8, "Rate limiting is per caller",
                  f"One client burns its {RATE_LIMIT}/min quota; another client is untouched.")
             statuses = []
             for attempt in range(1, RATE_LIMIT + 2):
@@ -266,7 +397,7 @@ def main() -> int:
             print(paint("   → one caller's burst cannot exhaust another caller's quota", GREEN))
 
             # 9 ------------------------------------------------------------
-            step(9, "Idempotent retries",
+            step(pacer, 9, "Idempotent retries",
                  "A client that times out and retries must not get a second, different decision.")
             retry_auth = {"X-API-Key": RETRY_KEY, "Idempotency-Key": "payment-88213"}
             first = client.post("/api/v1/score", json=SUSPICIOUS_EVENT, headers=retry_auth)
@@ -286,7 +417,7 @@ def main() -> int:
                  fields=["title", "status", "detail"])
 
             # 10 -----------------------------------------------------------
-            step(10, "Prometheus metrics",
+            step(pacer, 10, "Prometheus metrics",
                  "HTTP metrics say the service is up; the score distribution says the model still works.")
             wanted = (
                 "dock_http_requests_total",
@@ -300,7 +431,7 @@ def main() -> int:
                     print(f"     {line}")
 
             # 11 -----------------------------------------------------------
-            step(11, "Graceful shutdown",
+            step(pacer, 11, "Graceful shutdown",
                  "Readiness fails first so traffic stops arriving, then in-flight requests drain.")
             print(f"   {paint('$', CYAN)} kill -TERM  (what `docker stop` and Kubernetes send)\n")
             server.send_signal(signal.SIGTERM)
